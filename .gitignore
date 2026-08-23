@@ -69,6 +69,7 @@ Thumbs.db
 
 # VS Code
 .vscode/
+*.code-workspace
 
 # JetBrains IDEs
 .idea/
