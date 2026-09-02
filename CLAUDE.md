@@ -40,12 +40,11 @@ Other projects in this workspace read this module's outputs directly (no `terraf
 
 Renaming a subnet, changing an output name, or changing a CIDR here can silently break any of these if they've been applied. Check before assuming it's safe — don't guess.
 
-## Git remotes — push to both, every time
+## Git remotes — single remote now
 
 - `origin` → `github.com:xstratus/azure-virtual-network` (public)
-- `jalcalaroot` → `github.com:jalcalaroot/azure-virtual-network` (public)
 
-Both should always carry identical history. `git push origin main && git push jalcalaroot main` after every commit. If they ever diverge again, prefer re-squashing to one clean commit + force-push over trying to merge unrelated histories.
+Used to also dual-push to `jalcalaroot/azure-virtual-network`, but that account has moved off this old Azure subscription entirely (see the sibling `jalcalaroot-azure` project). The `jalcalaroot` mirror was renamed to `jalcalaroot/azure-virtual-network-xtratus` (2026-09-02) to free the `azure-virtual-network` name for a new, unrelated network module repo under the `jalcalaroot` account — it's a frozen snapshot now, not an active mirror. No more dual-push here.
 
 ## .gitignore convention
 
