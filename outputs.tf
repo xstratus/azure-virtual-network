@@ -73,6 +73,16 @@ output "aks_subnet_cidr" {
   value       = var.aks_subnet_cidr
 }
 
+output "containerapps_subnet_id" {
+  description = "ID de la subnet dedicada de Azure Container Apps (delegada a Microsoft.App/environments)"
+  value       = azurerm_subnet.containerapps.id
+}
+
+output "containerapps_subnet_cidr" {
+  description = "CIDR de la subnet dedicada de Azure Container Apps"
+  value       = var.containerapps_subnet_cidr
+}
+
 output "key_vault_id" {
   description = "ID of the Key Vault"
   value       = azurerm_key_vault.this.id

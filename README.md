@@ -1,6 +1,6 @@
 # Azure HA Virtual Network - Network Layer
 
-Terraform module for the network layer of a highly available Azure VNet spanning all 3 Availability Zones (AZs) in the region, with a 3-tier subnet design (Public, App, Data), a dedicated subnet for AKS, a dedicated subnet for Private Endpoints, a dedicated subnet for Application Gateway, and full network observability (Flow Logs, Traffic Analytics, diagnostic settings).
+Terraform module for the network layer of a highly available Azure VNet spanning all 3 Availability Zones (AZs) in the region, with a 3-tier subnet design (Public, App, Data), a dedicated subnet for AKS, a dedicated subnet for Azure Container Apps, a dedicated subnet for Private Endpoints, a dedicated subnet for Application Gateway, and full network observability (Flow Logs, Traffic Analytics, diagnostic settings).
 
 ## Architecture overview
 
@@ -11,14 +11,14 @@ Terraform module for the network layer of a highly available Azure VNet spanning
                                  |
                          NAT Gateway (shared)
                                  |
-        -----------------------------------------------------
-        |                    |                    |
-Public subnet          App subnet            AKS subnet
-(NSG-Public)          (NSG-Private)          (NSG-AKS)
+        -----------------------------------------------------------------
+        |                    |                    |                    |
+Public subnet          App subnet            AKS subnet      Container Apps subnet
+(NSG-Public)          (NSG-Private)          (NSG-AKS)       (NSG-ContainerApps, internal-only)
         |                    |
         |              Data subnet
         |              (NSG-Data)
-        -----------------------------------------------------
+        -----------------------------------------------------------------
                                  |
                     snet-privatelink (NSG-PrivateLink)
                                  |
@@ -40,12 +40,13 @@ Every subnet is regional and already spans all 3 AZs; high availability is achie
 | Virtual Network | 1 | `10.0.0.0/16` |
 | Public / App / Data subnets | 1 each | Regional, span all 3 AZs; HA via `zones` on the resources deployed into them |
 | AKS subnet | 1 | Flat subnet, no per-AZ split; pod IPs come from the CNI Overlay range, not this subnet |
+| Container Apps subnet | 1 | Flat subnet, delegated to `Microsoft.App/environments`; consumed by an internal-only Container Apps Environment in `azure-container-apps-poc` |
 | Application Gateway subnet | 1 | Not zonal - shared across AZs via the `zones` argument on the Application Gateway resource itself |
 | Private Endpoints subnet | 1 | Shared across the VNet, not zonal |
-| Network Security Groups | 6 | `NSG-Public`, `NSG-Private`, `NSG-Data`, `NSG-PrivateLink`, `NSG-AppGW`, `NSG-AKS` |
-| NAT Gateway | 1 | Shared, associated to the App and AKS subnets |
+| Network Security Groups | 7 | `NSG-Public`, `NSG-Private`, `NSG-Data`, `NSG-PrivateLink`, `NSG-AppGW`, `NSG-AKS`, `NSG-ContainerApps` |
+| NAT Gateway | 1 | Shared, associated to the App, AKS, and Container Apps subnets |
 | Public IP | 1 | Associated with the NAT Gateway |
-| Route Tables | 4 | `rt-public`, `rt-app`, `rt-data`, `rt-aks` |
+| Route Tables | 5 | `rt-public`, `rt-app`, `rt-data`, `rt-aks`, `rt-containerapps` |
 | Key Vault | 1 | Public access disabled, Private Endpoint only |
 | Storage Account | 1 | Data Lake Gen2 (HNS), ZRS, public access disabled |
 | Private Endpoints | 3 | Key Vault, Storage Blob, Storage DFS |
@@ -62,6 +63,7 @@ Every subnet is regional and already spans all 3 AZs; high availability is achie
 - **Single shared NAT Gateway** for cost efficiency. Trade-off: if its zone fails, the whole region loses outbound internet through it. One NAT Gateway per AZ (paired with per-AZ subnets) gives full zonal resilience instead.
 - **Application Gateway subnet is single** — the resource can only reference one subnet in its `gateway_ip_configuration`; multi-AZ resiliency is achieved via the `zones` argument on the Application Gateway itself.
 - **AKS subnet is flat, not per-AZ.** With Azure CNI Overlay, pod IPs come from a separate overlay range, not this subnet; node pool HA is via the node pool's own `zones` argument (set in the `azure-aks-cluster` project, not here).
+- **Container Apps subnet is flat and delegated** to `Microsoft.App/environments` (required for a workload-profiles Container Apps Environment). The environment built on top of it in `azure-container-apps-poc` is internal-only — Application Gateway is the sole public entry point, which is also what makes this subnet's NSG actually enforceable (an *external* Container Apps environment routes inbound traffic through a Microsoft-managed public IP that bypasses the subnet's NSG entirely).
 - **Private Endpoints subnet is shared** across the VNet (Private Endpoints aren't zonal).
 - **Key Vault and Storage Account** are reachable only via Private Endpoint, never over the public internet or NAT Gateway.
 - **Remote state.** This project's state lives in Azure Blob Storage, provisioned by the sibling `azure-tfstate-bootstrap` project (see `backend.tf`). It is not local.
@@ -76,6 +78,7 @@ Every subnet is regional and already spans all 3 AZs; high availability is achie
 | `NSG-PrivateLink` | Private Endpoints subnet | Traffic from the App/Data subnet CIDRs on 443/1433/5432 |
 | `NSG-AppGW` | Application Gateway subnet | GatewayManager (65200-65535), HTTP/HTTPS from Internet, AzureLoadBalancer |
 | `NSG-AKS` | AKS subnet | AzureLoadBalancer (health probes), VNet-internal traffic |
+| `NSG-ContainerApps` | Container Apps subnet | AzureLoadBalancer (health probes), Application Gateway subnet CIDR on the edge proxy ports (80/443/31080/31443), VNet-internal traffic |
 
 All NSGs deny all other inbound traffic by default (`Deny-All-Inbound`, priority 4096).
 
@@ -87,6 +90,7 @@ All NSGs deny all other inbound traffic by default (`Deny-All-Inbound`, priority
 | App | `rt-app` | *(none)* | Shared NAT Gateway, associated directly to the App subnet |
 | Data | `rt-data` | `None` | Internet egress blocked (defense in depth) |
 | AKS | `rt-aks` | *(none)* | Shared NAT Gateway, associated directly to the AKS subnet |
+| Container Apps | `rt-containerapps` | *(none)* | Shared NAT Gateway, associated directly to the Container Apps subnet |
 
 NAT Gateway can't be a route table next hop in Azure — egress is set via direct subnet association instead, which is why `rt-app` and `rt-aks` have no explicit `0.0.0.0/0` entry. Private Endpoint traffic uses system routes injected automatically, no UDR changes needed.
 
@@ -151,6 +155,7 @@ If you deploy again afterward, the Key Vault (`kv-ha-vnet-demo`) goes through Az
 | `app_subnet_cidr` | `10.0.8.0/22` | Single regional subnet, spans all AZs |
 | `data_subnet_cidr` | `10.0.20.0/22` | Single regional subnet, spans all AZs |
 | `aks_subnet_cidr` | `10.0.60.0/24` | Single flat subnet, no per-AZ split |
+| `containerapps_subnet_cidr` | `10.0.70.0/23` | Delegated to `Microsoft.App/environments`, min supported is `/27` |
 | `privatelink_subnet_cidr` | `10.0.30.0/24` | Shared, Private Endpoints |
 | `appgw_subnet_cidr` | `10.0.40.0/24` | Shared, Application Gateway |
 | `key_vault_name` | `kv-ha-vnet-demo` | Must be globally unique, 3-24 alphanumeric chars |
@@ -171,6 +176,7 @@ Override with a `terraform.tfvars` file or `-var` flags. `key_vault_name`, `stor
 | `vnet_id` | ID of the VNet |
 | `public_subnet_id` / `app_subnet_id` / `data_subnet_id` | Subnet ID per tier |
 | `aks_subnet_id` / `aks_subnet_cidr` | AKS subnet |
+| `containerapps_subnet_id` / `containerapps_subnet_cidr` | Container Apps subnet |
 | `appgw_subnet_id` / `appgw_subnet_cidr` | Application Gateway subnet |
 | `privatelink_subnet_id` | Private Endpoints subnet |
 | `nat_gateway_id` / `nat_gateway_public_ip` | NAT Gateway |
@@ -190,6 +196,7 @@ Sibling projects in this workspace read this module's outputs (via `terraform ou
 | `azure-mysql-database` | `data_subnet_id` (Private Endpoint placement) |
 | `azure-lb-webserver` | Subnet names directly (`snet-appgw`) plus a configurable list of app subnet names |
 | `azure-aks-cluster` | Reads `azure-tfstate-bootstrap`'s backend config for its own remote state; may reference this project's subnet/NSG outputs for node pool placement |
+| `azure-container-apps-poc` | `containerapps_subnet_id` (Container Apps Environment placement), `appgw_subnet_id` (Application Gateway placement). Deliberately does *not* read `key_vault_id` - it uses its own dedicated Key Vault instead (see that project's README for why) |
 
 If you change a subnet name, CIDR, or output name here, check whether any of these have already been applied against the old values before assuming it's safe.
 

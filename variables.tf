@@ -80,6 +80,12 @@ variable "aks_subnet_cidr" {
   default     = "10.0.60.0/24"
 }
 
+variable "containerapps_subnet_cidr" {
+  description = "CIDR para la subnet dedicada de Azure Container Apps (delegada a Microsoft.App/environments, minimo /27, usamos /23 para dejar espacio)"
+  type        = string
+  default     = "10.0.70.0/23"
+}
+
 variable "tags" {
   description = "Tags adicionales a fusionar con los tags base (ambiente, propietario, proyecto)"
   type        = map(string)

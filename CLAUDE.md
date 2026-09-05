@@ -6,6 +6,7 @@ Network layer: VNet + one regional subnet per tier (public/app/data/aks/appgw/pr
 
 - **One subnet per tier, not one per AZ.** Subnets are regional in Azure (they already span all zones) — HA comes from the `zones` argument on the *resources* deployed into them (VMs, VMSS, node pools), not from splitting subnets per AZ. If you see a suggestion to add `snet-app-az2`-style resources, that's the old design; don't reintroduce it.
 - **`appgw` and `privatelink` subnets stay single** — always were, no per-AZ version ever existed for those.
+- **`containerapps` subnet is delegated to `Microsoft.App/environments`** and sized `/23` (min supported is `/27`). The Container Apps Environment built on it (in `azure-container-apps-poc`) is internal-only on purpose — an *external* workload-profiles environment routes inbound traffic through a Microsoft-managed public IP that bypasses this subnet's NSG entirely, which would make `nsg-containerapps` pointless. Application Gateway is the only public entry point; it reaches the environment over the VNet.
 
 ## Backend
 
@@ -37,6 +38,7 @@ Other projects in this workspace read this module's outputs directly (no `terraf
 | `azure-mysql-database` | `data_subnet_id` |
 | `azure-lb-webserver` | subnet names directly (`snet-appgw`, app subnet names) |
 | `azure-aks-cluster` | own backend via `azure-tfstate-bootstrap`; may reference subnet/NSG outputs |
+| `azure-container-apps-poc` | `containerapps_subnet_id`, `appgw_subnet_id`. Does NOT read `key_vault_id` — uses its own dedicated Key Vault (this project's is Private-Endpoint-only, so a Terraform apply running outside the VNet can't do data-plane cert imports against it) |
 
 Renaming a subnet, changing an output name, or changing a CIDR here can silently break any of these if they've been applied. Check before assuming it's safe — don't guess.
 
